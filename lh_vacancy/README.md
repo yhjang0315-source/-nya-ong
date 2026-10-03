@@ -8,6 +8,8 @@
   - `03_aggregate_export.py` 반출용 집계표·그래프 (소수 칸 자동 가림)
   - `04_context_model.py` KCB 소득·관리비 결합 + 장기공실 위험 모델
   - `05_make_charts.py` [집에서] 반출한 CSV로 기획서용 그래프 12종 생성
+  - `06_build_dashboard.py` [집에서] 반출 CSV를 묶어 `app/dashboard.html` 생성 (인터넷 없이 열림)
+- `app/` 웹 대시보드 '빈집 레이더' (`template.html` 원본, `dashboard.html` 생성물)
   - `config.py` 경로·컬럼명·가림 기준 설정, `common.py` 공통 함수
   - `run_all.py` 전체 실행
 - `docs/LH공실_분석설계서.pdf` 문제 정의, 가설, 분석 설계, 일정, 역할, 신청서 문구, 기획서 목차
