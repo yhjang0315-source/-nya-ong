@@ -1,7 +1,7 @@
 """[본 분석 2] 반출용 집계표와 그래프.
 
 모두 지역·유형 단위로 집계하고, 호수가 MIN_CELL 미만인 칸은 가린다.
-결과: output/export/03_*.csv, output/export/fig_*.png
+결과: output/export/03_*.csv (반출은 CSV만 가능 → 그래프는 05_make_charts.py로 집에서 생성)
 """
 import pandas as pd
 import common
@@ -54,20 +54,4 @@ summarize(["주택유형"], "주택유형별")
 t = ep.groupby("공실시작연도").agg(호수=("호관리번호", "size"), 공실_중위개월=("공실개월", "median")).reset_index()
 common.save(common.mask_small(t), "03_연도별_공실발생.csv")
 
-# 그래프
-plt = common.setup_korean_font()
-out = common.ensure_out("export")
-for col, fname in [("면적구간", "면적"), ("공급유형", "공급유형"), ("준공연차구간", "준공연차")]:
-    d = unit.groupby(col, observed=True).agg(n=("호관리번호", "size"), r=("현재공실", "mean"))
-    d = d[d["n"] >= config.MIN_CELL]
-    ax = (d["r"] * 100).plot(kind="bar", figsize=(7, 4), color="#4b3a9a")
-    ax.set_ylabel("현재 공실률(%)"); ax.set_xlabel(col); ax.set_title("%s별 현재 공실률" % col)
-    plt.tight_layout(); plt.savefig(out + "/fig_%s별_공실률.png" % fname, dpi=150); plt.close()
-top = sgg[sgg["호수"] >= config.MIN_CELL].nlargest(15, "현재공실률(%)")
-ax = top.set_index("시군구")["현재공실률(%)"].plot(kind="barh", figsize=(7, 5), color="#e8612c")
-ax.invert_yaxis(); ax.set_xlabel("현재 공실률(%)"); ax.set_title("현재 공실률 상위 시군구")
-plt.tight_layout(); plt.savefig(out + "/fig_시군구_공실률_상위.png", dpi=150); plt.close()
-ax = t[t["호수"] >= config.MIN_CELL].set_index("공실시작연도")["공실_중위개월"].plot(figsize=(7, 4), marker="o")
-ax.set_ylabel("공실 기간 중위값(개월)"); ax.set_title("연도별 공실 기간 추이")
-plt.tight_layout(); plt.savefig(out + "/fig_연도별_공실기간.png", dpi=150); plt.close()
-print("그래프 저장 완료")
+print("집계표 저장 완료 (그래프는 집에서 05_make_charts.py 로 생성)")

@@ -82,8 +82,4 @@ r = unit.groupby(["시도", "시군구"]).agg(호수=("호관리번호", "size")
                                        실제장기공실비율=("장기공실호", "mean")).reset_index()
 common.save(common.mask_small(r.round(3)), "04_시군구_예측위험.csv")
 
-plt = common.setup_korean_font()
-ax = imp.head(15).set_index("변수")["중요도"].plot(kind="barh", figsize=(7, 5), color="#4b3a9a")
-ax.invert_yaxis(); ax.set_title("장기공실 예측 변수 중요도 (상위 15)")
-plt.tight_layout(); plt.savefig(common.ensure_out("export") + "/fig_변수중요도.png", dpi=150); plt.close()
 print(pd.DataFrame(res))

@@ -1,7 +1,7 @@
 """[1차 방문] 데이터 요약표 만들기 → 반출 신청용.
 
 개인/호 단위 값은 내보내지 않고 컬럼별 통계만 만든다.
-결과: output/export/01_컬럼요약_*.csv, 01_분포_*.csv, 01_환경정보.txt
+결과: output/export/01_컬럼요약_*.csv, 01_분포_*.csv, 01_환경정보.csv
 """
 import platform
 import sys
@@ -63,6 +63,6 @@ for m in ["pandas", "numpy", "matplotlib", "sklearn", "scipy", "statsmodels", "l
         lines.append("%s %s" % (m, getattr(mod, "__version__", "?")))
     except ImportError:
         lines.append("%s (없음)" % m)
-path = common.ensure_out("export") + "/01_환경정보.txt"
-open(path, "w", encoding="utf-8").write("\n".join(lines))
+common.save(pd.DataFrame({"항목": [l.split(" ", 1)[0] for l in lines], "버전": [l.split(" ", 1)[1] for l in lines]}),
+            "01_환경정보.csv")
 print("\n".join(lines))
