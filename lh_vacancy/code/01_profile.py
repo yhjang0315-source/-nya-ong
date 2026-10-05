@@ -45,7 +45,7 @@ common.save(common.mask_small(y.rename_axis("임대시작연도").reset_index(na
 print("호 수:", con["호관리번호"].nunique(), "/ 호당 평균 계약 수:", round(len(con) / con["호관리번호"].nunique(), 2))
 
 try:
-    fee = common.rename(common.read_csv("fee", chunksize=None), config.FEE_COLS)
+    fee = common.rename(next(iter(common.read_csv("fee", chunksize=1000000))), config.FEE_COLS)  # 대용량: 앞 100만 행만 요약
     profile(fee, "관리비")
 except FileNotFoundError:
     print("관리비 파일 없음 - 건너뜀")
