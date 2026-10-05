@@ -25,7 +25,11 @@ for k, f in FILES.items():
         print("없음:", f)
 is_fake = os.path.abspath(config.DATA_DIR).endswith("fake_data")
 meta = {"fake": is_fake, "built": pd.Timestamp.now().strftime("%Y-%m-%d"), "min_cell": config.MIN_CELL}
-tpl = open(os.path.join(APP, "template.html"), encoding="utf-8").read()
+_tp = os.path.join(APP, "template.html")
+if not os.path.exists(_tp):  # 센터 반입본은 확장자 제한으로 template.txt
+    _tp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.txt")
+tpl = open(_tp, encoding="utf-8").read()
+os.makedirs(APP, exist_ok=True)
 html = tpl.replace("/*__DATA__*/", "const DATA=" + json.dumps(data, ensure_ascii=False) + ";const META=" + json.dumps(meta, ensure_ascii=False) + ";")
 out = os.path.join(APP, "dashboard.html")
 open(out, "w", encoding="utf-8").write(html)
