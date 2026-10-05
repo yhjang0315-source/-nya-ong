@@ -1,6 +1,6 @@
 """[집에서 실행] 반출 CSV를 묶어 대시보드 HTML 한 파일 생성.
 
-사용: python 06_build_dashboard.py   → ../app/dashboard.html
+사용: python s06dashboard.py   → ../app/dashboard.html
 반출 CSV가 output/export/ 에 있어야 한다. 실제 데이터로 바꾸면 다시 실행만 하면 된다.
 """
 import json

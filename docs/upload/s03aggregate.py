@@ -1,7 +1,7 @@
 """[본 분석 2] 반출용 집계표와 그래프.
 
 모두 지역·유형 단위로 집계하고, 호수가 MIN_CELL 미만인 칸은 가린다.
-결과: output/export/03_*.csv (반출은 CSV만 가능 → 그래프는 05_make_charts.py로 집에서 생성)
+결과: output/export/03_*.csv (반출은 CSV만 가능 → 그래프는 s05charts.py로 집에서 생성)
 """
 import pandas as pd
 import common
@@ -54,4 +54,4 @@ summarize(["주택유형"], "주택유형별")
 t = ep.groupby("공실시작연도").agg(호수=("호관리번호", "size"), 공실_중위개월=("공실개월", "median")).reset_index()
 common.save(common.mask_small(t), "03_연도별_공실발생.csv")
 
-print("집계표 저장 완료 (그래프는 집에서 05_make_charts.py 로 생성)")
+print("집계표 저장 완료 (그래프는 집에서 s05charts.py 로 생성)")

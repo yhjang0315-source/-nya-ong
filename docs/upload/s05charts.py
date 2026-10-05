@@ -1,7 +1,7 @@
 """[집에서 실행] 반출한 CSV로 기획서용 그래프 만들기.
 
 센터 반출이 CSV만 가능하므로 그래프는 밖에서 그린다.
-사용: 반출받은 CSV를 output/export/ 에 넣고 python 05_make_charts.py
+사용: 반출받은 CSV를 output/export/ 에 넣고 python s05charts.py
 결과: output/charts/*.png
 """
 import os
