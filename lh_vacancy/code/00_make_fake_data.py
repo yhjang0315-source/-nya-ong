@@ -27,35 +27,47 @@ def ym(idx):
 
 rows, units = [], []
 end_idx = 2026 * 12 + 6
-n_units = 6000
-for u in range(n_units):
+# 단지 만들기: 단지마다 법정동·준공·공급유형·주택유형·난방이 같다
+complexes = []
+for c in range(220):
     sido, sgg, code = SGG[rng.integers(len(SGG))]
-    sp = SUPPLY[rng.integers(len(SUPPLY))]
-    area = float(np.clip(rng.normal(42 if sp in ("행복주택", "영구임대") else 55, 10), 16, 84))
-    rooms = 1 if area < 30 else (2 if area < 50 else 3)
-    built = int(rng.integers(2000 * 12, 2024 * 12))
-    deposit = int(area * rng.uniform(40, 120) * 10000)
-    rent = int(area * rng.uniform(3000, 9000))
-    ho = "H%07d" % u
-    # 지방·소형일수록 공실이 길다는 가정의 임의 데이터
-    base_gap = 1 + (3 if sido not in ("서울특별시", "경기도") else 0) + (4 if area < 35 else 0)
-    t = built + int(rng.exponential(base_gap))
-    first = True
-    while t < end_idx:
-        term = int(rng.choice([24, 24, 24, 12, 36]))
-        start, end = t, t + term - 1
-        cancel = start + int(rng.integers(3, term)) if rng.random() < 0.15 else None
-        rows.append({
-            "CNP_NM": sido, "SGG_NM": sgg, "LGDN_CD": code + "%05d" % rng.integers(10100, 12000),
-            "HO_ADM_NO": ho, "SPL_TP_NM": sp, "LS_BLD_DS_NM": BLDG[rng.integers(len(BLDG))],
-            "HTN_FMLA_DS_NM": HEAT[rng.integers(len(HEAT))], "CCW_DT": ym(built), "DDO_AR": round(area, 2),
-            "RM_CNT": rooms, "FST_CTRT_DT": ym(start - 1), "MVIN_DT": ym(start), "LS_ST_DT": ym(start),
-            "LS_ED_DT": ym(end), "CNCT_DT": ym(cancel) if cancel else "", "LS_GMY": deposit, "RFE": rent,
-        })
-        stop = cancel if cancel else end
-        renew = rng.random() < (0.55 if cancel is None else 0.0)
-        t = stop + 1 if renew else stop + 1 + int(rng.exponential(base_gap * (2 if first else 1)))
-        first = False
+    complexes.append({"id": c, "sido": sido, "sgg": sgg, "dong": code + "%05d" % rng.integers(10100, 12000),
+                      "sp": SUPPLY[rng.integers(len(SUPPLY))], "bldg": BLDG[rng.integers(len(BLDG))],
+                      "heat": HEAT[rng.integers(len(HEAT))], "built": int(rng.integers(2000 * 12, 2024 * 12)),
+                      "n": int(rng.integers(15, 60))})
+u = 0
+for cx in complexes:
+    for k in range(cx["n"]):
+        sido, sgg, sp, built = cx["sido"], cx["sgg"], cx["sp"], cx["built"]
+        area = float(np.clip(rng.normal(42 if sp in ("행복주택", "영구임대") else 55, 10), 16, 84))
+        rooms = 1 if area < 30 else (2 if area < 50 else 3)
+        deposit = int(area * rng.uniform(40, 120) * 10000)
+        rent = int(area * rng.uniform(3000, 9000))
+        ho = "H%07d" % u; u += 1
+        base_gap = 1 + (3 if sido not in ("서울특별시", "경기도") else 0) + (4 if area < 35 else 0) + (3 if cx["id"] % 17 == 0 else 0)
+        t = built + int(rng.exponential(base_gap))
+        first = True
+        while t < end_idx:
+            term = int(rng.choice([24, 24, 24, 12, 36]))
+            start, end = t, t + term - 1
+            cancel = start + int(rng.integers(3, term)) if rng.random() < 0.15 else None
+            rows.append({
+                "CNP_NM": sido, "SGG_NM": sgg, "LGDN_CD": cx["dong"],
+                "HO_ADM_NO": ho, "SPL_TP_NM": sp, "LS_BLD_DS_NM": cx["bldg"],
+                "HTN_FMLA_DS_NM": cx["heat"], "CCW_DT": ym(built), "DDO_AR": round(area, 2),
+                "RM_CNT": rooms, "FST_CTRT_DT": ym(start - 1), "MVIN_DT": ym(start), "LS_ST_DT": ym(start),
+                "LS_ED_DT": ym(end), "CNCT_DT": ym(cancel) if cancel else "", "LS_GMY": deposit, "RFE": rent,
+            })
+            stop = cancel if cancel else end
+            renew = rng.random() < (0.55 if cancel is None else 0.0)
+            t = stop + 1 if renew else stop + 1 + int(rng.exponential(base_gap * (2 if first else 1)))
+            first = False
+# ③ 공개 LH 임대단지 정보(가짜): 단지명·주소코드·준공·공급유형·세대수 (실제는 공공데이터포털/마이홈포털)
+pub = [{"단지명": "%s%s %d단지" % (cx["sgg"][:-1], ["행복", "푸른", "햇살", "새봄"][cx["id"] % 4], cx["id"] % 9 + 1),
+        "법정동코드": cx["dong"], "준공년월": ym(cx["built"] + int(rng.integers(-1, 2))), "공급유형": cx["sp"],
+        "세대수": cx["n"] + int(rng.integers(0, 5)), "위도": round(36 + rng.uniform(-1.5, 1.5), 5),
+        "경도": round(127.5 + rng.uniform(-1.2, 1.2), 5)} for cx in complexes]
+pd.DataFrame(pub).to_csv(os.path.join(config.DATA_DIR, "LH_임대단지정보_공공.csv"), index=False, encoding="utf-8")
 pd.DataFrame(rows).to_csv(os.path.join(config.DATA_DIR, config.FILES["contract"]), index=False, encoding="utf-8")
 
 # 관리비(2023.01~2026.07): 호별 월 관리비
@@ -83,4 +95,4 @@ for _, _, code in SGG:
                         r["C%d_CNT" % (k + 1)] = int(w[k] * rng.integers(300, 3000))
                     kcb.append(r)
 pd.DataFrame(kcb).to_csv(os.path.join(config.DATA_DIR, config.FILES["kcb"]), index=False, encoding="utf-8")
-print("가짜 데이터 생성 완료:", config.DATA_DIR, "계약", len(rows), "관리비", len(fee), "KCB", len(kcb))
+print("(공개 단지정보 포함) 가짜 데이터 생성 완료:", config.DATA_DIR, "계약", len(rows), "관리비", len(fee), "KCB", len(kcb))
