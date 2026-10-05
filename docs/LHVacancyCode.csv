@@ -1,0 +1,756 @@
+file,line,text
+config.py,1,"""""""LH 임대주택 공실 분석 - 공통 설정."
+config.py,2,
+config.py,3,센터에서는 DATA_DIR 만 실제 데이터 폴더로 바꾸면 된다.
+config.py,4,""""""""
+config.py,5,import os
+config.py,6,
+config.py,7,"# 데이터 위치: 환경변수 LH_DATA_DIR 가 있으면 그것을, 없으면 ../fake_data 를 쓴다."
+config.py,8,"DATA_DIR = os.environ.get(""LH_DATA_DIR"", os.path.join(os.path.dirname(__file__), "".."", ""fake_data""))"
+config.py,9,"OUT_DIR = os.environ.get(""LH_OUT_DIR"", os.path.join(os.path.dirname(__file__), "".."", ""output""))"
+config.py,10,
+config.py,11,FILES = {
+config.py,12,"    ""contract"": ""전국 건설임대주택 계약 기초데이터(계약).csv"","
+config.py,13,"    ""fee"": ""전국 건설임대주택 계약 기초데이터(관리비).csv"","
+config.py,14,"    ""kcb"": ""TB_KCB_INCOME_STAT_DATASET.csv"","
+config.py,15,"    ""skt_age"": ""seoul_flow_age.csv"","
+config.py,16,}
+config.py,17,
+config.py,18,# 데이터 마지막 시점 (정의서 기준). 이 시점까지 다음 계약이 없으면 '공실 진행 중'으로 본다.
+config.py,19,DATA_END_YM = 202607
+config.py,20,
+config.py,21,# 반출 심의용: 이 건수 미만인 집계 칸은 가린다(센터 기준에 맞게 조정).
+config.py,22,MIN_CELL = 10
+config.py,23,
+config.py,24,# 장기 공실 기준(개월)
+config.py,25,"LONG_VACANCY = [6, 12, 24]"
+config.py,26,
+config.py,27,# 실제 파일 컬럼명(영문) -> 분석용 한글명. 파일이 이미 한글 컬럼이면 그대로 둔다.
+config.py,28,CONTRACT_COLS = {
+config.py,29,"    ""CNP_NM"": ""시도"", ""SGG_NM"": ""시군구"", ""LGDN_CD"": ""법정동코드"", ""HO_ADM_NO"": ""호관리번호"","
+config.py,30,"    ""SPL_TP_NM"": ""공급유형"", ""LS_BLD_DS_NM"": ""주택유형"", ""HTN_FMLA_DS_NM"": ""난방방식"","
+config.py,31,"    ""CCW_DT"": ""준공년월"", ""DDO_AR"": ""전용면적"", ""RM_CNT"": ""방수"", ""FST_CTRT_DT"": ""최초계약년월"","
+config.py,32,"    ""MVIN_DT"": ""입주년월"", ""LS_ST_DT"": ""임대시작년월"", ""LS_ED_DT"": ""임대종료년월"","
+config.py,33,"    ""CNCT_DT"": ""해약년월"", ""LS_GMY"": ""임대보증금"", ""RFE"": ""임대료"","
+config.py,34,}
+config.py,35,FEE_COLS = {
+config.py,36,"    ""HO_ADM_NO"": ""호관리번호"", ""STND_YM"": ""기준년월"", ""TMM_ADM_XPS"": ""당월관리비"","
+config.py,37,"    ""HTN_XPS"": ""난방비"", ""GAS_UFE"": ""가스사용료"", ""ELEC_CHRG"": ""전기요금"", ""WRA_CHRG"": ""수도료"","
+config.py,38,}
+config.py,39,"KCB_COLS = {""BS_YR_QT"": ""기준시점"", ""RES_COM_CD"": ""거주기준"", ""EMD_CD"": ""행정동코드"","
+config.py,40,"            ""SEX_CD"": ""성"", ""AGE_CD"": ""연령""}"
+config.py,41,
+config.py,42,# 면적 구간(㎡)
+config.py,43,"AREA_BINS = [0, 30, 40, 50, 60, 85, 1000]"
+config.py,44,"AREA_LABELS = [""30미만"", ""30~40"", ""40~50"", ""50~60"", ""60~85"", ""85이상""]"
+config.py,45,
+common.py,1,"""""""공통 함수: 읽기, 날짜 변환, 반출용 마스킹/저장."""""""
+common.py,2,import os
+common.py,3,import numpy as np
+common.py,4,import pandas as pd
+common.py,5,import config
+common.py,6,
+common.py,7,
+common.py,8,"def ensure_out(sub=""""):"
+common.py,9,"    path = os.path.join(config.OUT_DIR, sub)"
+common.py,10,"    os.makedirs(path, exist_ok=True)"
+common.py,11,    return path
+common.py,12,
+common.py,13,
+common.py,14,"def read_csv(key, usecols=None, sep="","", chunksize=None):"
+common.py,15,"    """"""정의서 기준 utf-8. 깨지면 cp949로 다시 시도."""""""
+common.py,16,"    path = os.path.join(config.DATA_DIR, config.FILES[key])"
+common.py,17,"    for enc in (""utf-8"", ""utf-8-sig"", ""cp949""):"
+common.py,18,        try:
+common.py,19,"            return pd.read_csv(path, sep=sep, encoding=enc, dtype=str, usecols=usecols,"
+common.py,20,"                               chunksize=chunksize, low_memory=False)"
+common.py,21,        except UnicodeDecodeError:
+common.py,22,            continue
+common.py,23,"    raise ValueError(""인코딩을 확인하세요: "" + path)"
+common.py,24,
+common.py,25,
+common.py,26,"def rename(df, mapping):"
+common.py,27,"    return df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})"
+common.py,28,
+common.py,29,
+common.py,30,def ym_to_idx(s):
+common.py,31,"    """"""'YYYYMM' 문자열 -> 월 번호(년*12+월-1). 비었거나 이상하면 NaN."""""""
+common.py,32,"    s = pd.Series(s).astype(str).str.replace(r""\D"", """", regex=True).str[:6]"
+common.py,33,"    y = pd.to_numeric(s.str[:4], errors=""coerce"")"
+common.py,34,"    m = pd.to_numeric(s.str[4:6], errors=""coerce"")"
+common.py,35,    idx = y * 12 + (m - 1)
+common.py,36,    idx[(m < 1) | (m > 12) | (y < 1950) | (y > 2100)] = np.nan
+common.py,37,    return idx
+common.py,38,
+common.py,39,
+common.py,40,def idx_to_year(idx):
+common.py,41,"    return (idx // 12).astype(""Int64"")"
+common.py,42,
+common.py,43,
+common.py,44,"def mask_small(df, count_col=""호수"", min_cell=None):"
+common.py,45,"    """"""건수가 기준 미만인 행의 값은 가린다(반출 심의 대비)."""""""
+common.py,46,    min_cell = min_cell or config.MIN_CELL
+common.py,47,    out = df.copy()
+common.py,48,    small = out[count_col] < min_cell
+common.py,49,    for c in out.columns:
+common.py,50,        if c != count_col and pd.api.types.is_numeric_dtype(out[c]):
+common.py,51,            out[c] = out[c].astype(float)
+common.py,52,"            out.loc[small, c] = np.nan"
+common.py,53,    out[count_col] = out[count_col].astype(object)
+common.py,54,"    out.loc[small, count_col] = ""<%d"" % min_cell"
+common.py,55,    return out
+common.py,56,
+common.py,57,
+common.py,58,"def save(df, name, sub=""export""):"
+common.py,59,"    path = os.path.join(ensure_out(sub), name)"
+common.py,60,"    df.to_csv(path, index=False, encoding=""utf-8-sig"")"
+common.py,61,"    print(""저장:"", path, df.shape)"
+common.py,62,    return path
+common.py,63,
+common.py,64,
+common.py,65,def setup_korean_font():
+common.py,66,    import matplotlib
+common.py,67,"    matplotlib.use(""Agg"")"
+common.py,68,    import matplotlib.pyplot as plt
+common.py,69,    from matplotlib import font_manager
+common.py,70,"    for name in [""Malgun Gothic"", ""NanumGothic"", ""AppleGothic"", ""Noto Sans CJK KR""]:"
+common.py,71,        if any(name in f.name for f in font_manager.fontManager.ttflist):
+common.py,72,"            plt.rcParams[""font.family""] = name"
+common.py,73,            break
+common.py,74,"    plt.rcParams[""axes.unicode_minus""] = False"
+common.py,75,    return plt
+common.py,76,
+s01profile.py,1,"""""""[1차 방문] 데이터 요약표 만들기 → 반출 신청용."
+s01profile.py,2,
+s01profile.py,3,개인/호 단위 값은 내보내지 않고 컬럼별 통계만 만든다.
+s01profile.py,4,"결과: output/export/01_컬럼요약_*.csv, 01_분포_*.csv, 01_환경정보.csv"
+s01profile.py,5,""""""""
+s01profile.py,6,import platform
+s01profile.py,7,import sys
+s01profile.py,8,import pandas as pd
+s01profile.py,9,import common
+s01profile.py,10,import config
+s01profile.py,11,
+s01profile.py,12,
+s01profile.py,13,"def profile(df, name):"
+s01profile.py,14,    rows = []
+s01profile.py,15,    for c in df.columns:
+s01profile.py,16,        s = df[c]
+s01profile.py,17,"        num = pd.to_numeric(s, errors=""coerce"")"
+s01profile.py,18,        is_num = num.notna().mean() > 0.9
+s01profile.py,19,        rows.append({
+s01profile.py,20,"            ""컬럼"": c, ""행수"": len(s), ""결측률(%)"": round(100 * (s.isna() | (s.astype(str).str.strip() == """")).mean(), 2),"
+s01profile.py,21,"            ""고유값수"": s.nunique(dropna=True),"
+s01profile.py,22,"            ""최소"": num.min() if is_num else """", ""최대"": num.max() if is_num else """","
+s01profile.py,23,"            ""중앙값"": num.median() if is_num else """","
+s01profile.py,24,        })
+s01profile.py,25,    out = pd.DataFrame(rows)
+s01profile.py,26,    # 식별자 컬럼은 최소/최대값을 지운다
+s01profile.py,27,"    out[[""최소"", ""최대"", ""중앙값""]] = out[[""최소"", ""최대"", ""중앙값""]].astype(object)"
+s01profile.py,28,"    out.loc[out[""컬럼""].isin([""호관리번호"", ""법정동코드"", ""행정동코드""]), [""최소"", ""최대"", ""중앙값""]] = """""
+s01profile.py,29,"    common.save(out, ""01_컬럼요약_%s.csv"" % name)"
+s01profile.py,30,
+s01profile.py,31,
+s01profile.py,32,"def dist(df, cols, name):"
+s01profile.py,33,    for c in cols:
+s01profile.py,34,        if c in df.columns:
+s01profile.py,35,"            t = df[c].fillna(""(결측)"").value_counts().rename_axis(c).reset_index(name=""호수"")"
+s01profile.py,36,"            common.save(common.mask_small(t), ""01_분포_%s_%s.csv"" % (name, c))"
+s01profile.py,37,
+s01profile.py,38,
+s01profile.py,39,"con = common.rename(common.read_csv(""contract""), config.CONTRACT_COLS)"
+s01profile.py,40,"profile(con, ""계약"")"
+s01profile.py,41,"dist(con, [""시도"", ""공급유형"", ""주택유형"", ""난방방식"", ""방수""], ""계약"")"
+s01profile.py,42,# 연도별 계약 시작 건수
+s01profile.py,43,"y = (common.ym_to_idx(con[""임대시작년월""]) // 12).value_counts().sort_index()"
+s01profile.py,44,"common.save(common.mask_small(y.rename_axis(""임대시작연도"").reset_index(name=""호수"")), ""01_분포_계약_임대시작연도.csv"")"
+s01profile.py,45,"print(""호 수:"", con[""호관리번호""].nunique(), ""/ 호당 평균 계약 수:"", round(len(con) / con[""호관리번호""].nunique(), 2))"
+s01profile.py,46,
+s01profile.py,47,try:
+s01profile.py,48,"    fee = common.rename(next(iter(common.read_csv(""fee"", chunksize=1000000))), config.FEE_COLS)  # 대용량: 앞 100만 행만 요약"
+s01profile.py,49,"    profile(fee, ""관리비"")"
+s01profile.py,50,except FileNotFoundError:
+s01profile.py,51,"    print(""관리비 파일 없음 - 건너뜀"")"
+s01profile.py,52,try:
+s01profile.py,53,"    kcb = common.rename(common.read_csv(""kcb""), config.KCB_COLS)"
+s01profile.py,54,"    profile(kcb, ""KCB"")"
+s01profile.py,55,except FileNotFoundError:
+s01profile.py,56,"    print(""KCB 파일 없음 - 건너뜀"")"
+s01profile.py,57,
+s01profile.py,58,# 분석 PC 환경 정보
+s01profile.py,59,"lines = [""python "" + sys.version, ""platform "" + platform.platform()]"
+s01profile.py,60,"for m in [""pandas"", ""numpy"", ""matplotlib"", ""sklearn"", ""scipy"", ""statsmodels"", ""lifelines"", ""geopandas""]:"
+s01profile.py,61,    try:
+s01profile.py,62,        mod = __import__(m)
+s01profile.py,63,"        lines.append(""%s %s"" % (m, getattr(mod, ""__version__"", ""?"")))"
+s01profile.py,64,    except ImportError:
+s01profile.py,65,"        lines.append(""%s (없음)"" % m)"
+s01profile.py,66,"common.save(pd.DataFrame({""항목"": [l.split("" "", 1)[0] for l in lines], ""버전"": [l.split("" "", 1)[1] for l in lines]}),"
+s01profile.py,67,"            ""01_환경정보.csv"")"
+s01profile.py,68,"print(""\n"".join(lines))"
+s01profile.py,69,
+s02vacancy.py,1,"""""""[본 분석 1] 호별 계약 이력으로 공실 구간 만들기."
+s02vacancy.py,2,
+s02vacancy.py,3,공실 정의
+s02vacancy.py,4,"- 같은 호에서 한 계약이 끝난 뒤(해약년월이 있으면 해약년월, 없으면 임대종료년월)"
+s02vacancy.py,5,  다음 계약 임대시작년월까지의 빈 기간(개월).
+s02vacancy.py,6,- 다음 계약이 없고 끝난 시점이 데이터 마지막 시점(2026.07) 이전이면 '공실 진행 중'(관측 중단).
+s02vacancy.py,7,- 준공 후 첫 임대시작까지 = '초기 미임대 기간'.
+s02vacancy.py,8,"결과(센터 안에서만 사용, 반출 금지): output/work/공실구간.parquet|csv, 호특성.csv"
+s02vacancy.py,9,""""""""
+s02vacancy.py,10,import numpy as np
+s02vacancy.py,11,import pandas as pd
+s02vacancy.py,12,import common
+s02vacancy.py,13,import config
+s02vacancy.py,14,
+s02vacancy.py,15,"con = common.rename(common.read_csv(""contract""), config.CONTRACT_COLS)"
+s02vacancy.py,16,"for c in [""준공년월"", ""임대시작년월"", ""임대종료년월"", ""해약년월"", ""최초계약년월"", ""입주년월""]:"
+s02vacancy.py,17,"    con[c + ""_i""] = common.ym_to_idx(con[c])"
+s02vacancy.py,18,"for c in [""전용면적"", ""방수"", ""임대보증금"", ""임대료""]:"
+s02vacancy.py,19,"    con[c] = pd.to_numeric(con[c], errors=""coerce"")"
+s02vacancy.py,20,end_data = common.ym_to_idx([str(config.DATA_END_YM)])[0]
+s02vacancy.py,21,
+s02vacancy.py,22,"con = con.dropna(subset=[""호관리번호"", ""임대시작년월_i""]).sort_values([""호관리번호"", ""임대시작년월_i""])"
+s02vacancy.py,23,"con[""종료_i""] = con[""해약년월_i""].fillna(con[""임대종료년월_i""])"
+s02vacancy.py,24,"con[""중도해약""] = con[""해약년월_i""].notna() & (con[""해약년월_i""] < con[""임대종료년월_i""])"
+s02vacancy.py,25,"con[""다음시작_i""] = con.groupby(""호관리번호"")[""임대시작년월_i""].shift(-1)"
+s02vacancy.py,26,
+s02vacancy.py,27,# 공실 구간: 계약 종료 다음 달부터 다음 계약 시작 전 달까지
+s02vacancy.py,28,"gap = con[""다음시작_i""] - con[""종료_i""] - 1"
+s02vacancy.py,29,"ongoing = con[""다음시작_i""].isna() & (con[""종료_i""] < end_data)"
+s02vacancy.py,30,ep = con.loc[(gap > 0) | ongoing].copy()
+s02vacancy.py,31,"ep[""공실개월""] = np.where(ep[""다음시작_i""].notna(), ep[""다음시작_i""] - ep[""종료_i""] - 1, end_data - ep[""종료_i""])"
+s02vacancy.py,32,"ep[""진행중""] = ep[""다음시작_i""].isna()"
+s02vacancy.py,33,"ep[""공실시작연도""] = ((ep[""종료_i""] + 1) // 12).astype(int)"
+s02vacancy.py,34,"ep[""직전계약_중도해약""] = ep[""중도해약""]"
+s02vacancy.py,35,"keep = [""호관리번호"", ""시도"", ""시군구"", ""법정동코드"", ""공급유형"", ""주택유형"", ""난방방식"", ""전용면적"", ""방수"","
+s02vacancy.py,36,"        ""준공년월_i"", ""임대보증금"", ""임대료"", ""공실시작연도"", ""공실개월"", ""진행중"", ""직전계약_중도해약""]"
+s02vacancy.py,37,ep = ep[keep]
+s02vacancy.py,38,
+s02vacancy.py,39,# 호 특성(가장 최근 계약 기준) + 공실 경험 요약
+s02vacancy.py,40,"last = con.groupby(""호관리번호"").tail(1).set_index(""호관리번호"")"
+s02vacancy.py,41,"unit = last[[""시도"", ""시군구"", ""법정동코드"", ""공급유형"", ""주택유형"", ""난방방식"", ""전용면적"", ""방수"","
+s02vacancy.py,42,"             ""준공년월_i"", ""임대보증금"", ""임대료""]].copy()"
+s02vacancy.py,43,"first_start = con.groupby(""호관리번호"")[""임대시작년월_i""].min()"
+s02vacancy.py,44,"unit[""초기미임대개월""] = (first_start - unit[""준공년월_i""]).clip(lower=0)"
+s02vacancy.py,45,"unit[""계약수""] = con.groupby(""호관리번호"").size()"
+s02vacancy.py,46,"unit[""중도해약수""] = con.groupby(""호관리번호"")[""중도해약""].sum()"
+s02vacancy.py,47,"g = ep.groupby(""호관리번호"")[""공실개월""]"
+s02vacancy.py,48,"unit[""공실횟수""] = g.size()"
+s02vacancy.py,49,"unit[""누적공실개월""] = g.sum()"
+s02vacancy.py,50,"unit[""최장공실개월""] = g.max()"
+s02vacancy.py,51,"unit = unit.fillna({""공실횟수"": 0, ""누적공실개월"": 0, ""최장공실개월"": 0})"
+s02vacancy.py,52,"unit[""현재공실""] = ep.groupby(""호관리번호"")[""진행중""].any().reindex(unit.index).fillna(False)"
+s02vacancy.py,53,"unit[""현재공실개월""] = ep[ep[""진행중""]].set_index(""호관리번호"")[""공실개월""].reindex(unit.index)"
+s02vacancy.py,54,"unit[""준공연차""] = ((end_data - unit[""준공년월_i""]) / 12).round(1)"
+s02vacancy.py,55,"unit[""면적구간""] = pd.cut(unit[""전용면적""], config.AREA_BINS, labels=config.AREA_LABELS, right=False)"
+s02vacancy.py,56,# 지역 내 임대료 상대수준(시군구 내 ㎡당 임대료 분위)
+s02vacancy.py,57,"unit[""㎡당임대료""] = unit[""임대료""] / unit[""전용면적""]"
+s02vacancy.py,58,"unit[""임대료분위_시군구내""] = unit.groupby(""시군구"")[""㎡당임대료""].transform("
+s02vacancy.py,59,"    lambda s: pd.qcut(s.rank(method=""first""), 4, labels=[""하"", ""중하"", ""중상"", ""상""]) if len(s) >= 4 else np.nan)"
+s02vacancy.py,60,
+s02vacancy.py,61,"work = common.ensure_out(""work"")"
+s02vacancy.py,62,"ep.to_csv(work + ""/공실구간.csv"", index=False, encoding=""utf-8-sig"")"
+s02vacancy.py,63,"unit.reset_index().to_csv(work + ""/호특성.csv"", index=False, encoding=""utf-8-sig"")"
+s02vacancy.py,64,"print(""공실 구간:"", len(ep), ""/ 호:"", len(unit), ""/ 현재 공실 호:"", int(unit[""현재공실""].sum()))"
+s02vacancy.py,65,"print(""※ output/work 는 호 단위 자료라 반출하지 말 것"")"
+s02vacancy.py,66,
+s02bcomplex.py,1,"""""""[본 분석 1-b] '같은 단지로 보이는 집' 묶기 → 단지 단위 공실 집계."
+s02bcomplex.py,2,
+s02bcomplex.py,3,LH 데이터에는 단지명이 없다. 대신 같은 법정동 + 같은 준공년월 + 같은 공급유형 + 같은 주택유형인
+s02bcomplex.py,4,호들은 거의 같은 단지이므로 이를 '추정 단지'로 묶는다.
+s02bcomplex.py,5,- 법정동코드가 시군구(5자리)까지만 들어 있으면 단지 구분이 거칠어지므로 경고를 출력한다.
+s02bcomplex.py,6,결과
+s02bcomplex.py,7,- output/work/추정단지.csv (센터 내부용)
+s02bcomplex.py,8,"- output/export/02b_추정단지별_공실.csv (반출용: 단지 키는 법정동코드·준공년월·유형만, 호 정보 없음, 소수 단지 가림)"
+s02bcomplex.py,9,""""""""
+s02bcomplex.py,10,import pandas as pd
+s02bcomplex.py,11,import common
+s02bcomplex.py,12,import config
+s02bcomplex.py,13,
+s02bcomplex.py,14,"work = config.OUT_DIR + ""/work"""
+s02bcomplex.py,15,"unit = pd.read_csv(work + ""/호특성.csv"", dtype={""법정동코드"": str})"
+s02bcomplex.py,16,
+s02bcomplex.py,17,"code = unit[""법정동코드""].fillna("""").str.replace(r""\D"", """", regex=True)"
+s02bcomplex.py,18,"digits = code.str.rstrip(""0"").str.len().median()"
+s02bcomplex.py,19,n_dong = code.nunique()
+s02bcomplex.py,20,"print(""법정동코드 고유값 %d개, 유효 자리수 중앙값 %.0f"" % (n_dong, digits))"
+s02bcomplex.py,21,if digits <= 5:
+s02bcomplex.py,22,"    print(""⚠ 법정동코드가 시군구 수준으로 보임 → 추정 단지 정확도 낮음. 조건 묶음(03) 분석을 우선 사용"")"
+s02bcomplex.py,23,
+s02bcomplex.py,24,"unit[""준공년월""] = (unit[""준공년월_i""] // 12).astype(""Int64"").astype(str) + \"
+s02bcomplex.py,25,"                  ((unit[""준공년월_i""] % 12 + 1).astype(""Int64"").astype(str).str.zfill(2))"
+s02bcomplex.py,26,"key = [""시도"", ""시군구"", ""법정동코드"", ""준공년월"", ""공급유형"", ""주택유형""]"
+s02bcomplex.py,27,"cx = unit.groupby(key, dropna=False).agg("
+s02bcomplex.py,28,"    호수=(""호관리번호"", ""size""),"
+s02bcomplex.py,29,"    현재공실호수=(""현재공실"", ""sum""),"
+s02bcomplex.py,30,"    현재공실_중위개월=(""현재공실개월"", ""median""),"
+s02bcomplex.py,31,"    평균누적공실개월=(""누적공실개월"", ""mean""),"
+s02bcomplex.py,32,"    최장공실_중위개월=(""최장공실개월"", ""median""),"
+s02bcomplex.py,33,"    평균전용면적=(""전용면적"", ""mean""),"
+s02bcomplex.py,34,"    소형비율=(""전용면적"", lambda s: (s < 40).mean()),"
+s02bcomplex.py,35,"    중도해약_호당평균=(""중도해약수"", ""mean""),"
+s02bcomplex.py,36,"    초기미임대_중위개월=(""초기미임대개월"", ""median""),"
+s02bcomplex.py,37,).reset_index()
+s02bcomplex.py,38,"cx[""현재공실률(%)""] = 100 * cx[""현재공실호수""] / cx[""호수""]"
+s02bcomplex.py,39,"cx[""장기공실호비율(%)""] = unit.assign(L=(unit[""최장공실개월""] >= 12) | (unit[""현재공실개월""] >= 12)) \"
+s02bcomplex.py,40,"    .groupby(key, dropna=False)[""L""].mean().values * 100"
+s02bcomplex.py,41,"cx = cx.round(2).sort_values(""현재공실률(%)"", ascending=False)"
+s02bcomplex.py,42,"cx.insert(0, ""추정단지ID"", range(1, len(cx) + 1))"
+s02bcomplex.py,43,"cx.to_csv(work + ""/추정단지.csv"", index=False, encoding=""utf-8-sig"")"
+s02bcomplex.py,44,"print(""추정 단지 수:"", len(cx), ""/ 단지당 평균 호수: %.1f"" % cx[""호수""].mean())"
+s02bcomplex.py,45,"common.save(common.mask_small(cx), ""02b_추정단지별_공실.csv"")"
+s02bcomplex.py,46,
+s03aggregate.py,1,"""""""[본 분석 2] 반출용 집계표와 그래프."
+s03aggregate.py,2,
+s03aggregate.py,3,"모두 지역·유형 단위로 집계하고, 호수가 MIN_CELL 미만인 칸은 가린다."
+s03aggregate.py,4,결과: output/export/03_*.csv (반출은 CSV만 가능 → 그래프는 s05charts.py로 집에서 생성)
+s03aggregate.py,5,""""""""
+s03aggregate.py,6,import pandas as pd
+s03aggregate.py,7,import common
+s03aggregate.py,8,import config
+s03aggregate.py,9,
+s03aggregate.py,10,"work = config.OUT_DIR + ""/work"""
+s03aggregate.py,11,"unit = pd.read_csv(work + ""/호특성.csv"", dtype={""법정동코드"": str})"
+s03aggregate.py,12,"ep = pd.read_csv(work + ""/공실구간.csv"", dtype={""법정동코드"": str})"
+s03aggregate.py,13,"L6, L12, L24 = config.LONG_VACANCY"
+s03aggregate.py,14,
+s03aggregate.py,15,
+s03aggregate.py,16,"def summarize(group_cols, name):"
+s03aggregate.py,17,"    u = unit.groupby(group_cols, observed=True).agg("
+s03aggregate.py,18,"        호수=(""호관리번호"", ""size""),"
+s03aggregate.py,19,"        현재공실호수=(""현재공실"", ""sum""),"
+s03aggregate.py,20,"        공실경험호비율=(""공실횟수"", lambda s: round(100 * (s > 0).mean(), 1)),"
+s03aggregate.py,21,"        평균누적공실개월=(""누적공실개월"", ""mean""),"
+s03aggregate.py,22,"        초기미임대_중위개월=(""초기미임대개월"", ""median""),"
+s03aggregate.py,23,"        중도해약_호당평균=(""중도해약수"", ""mean""),"
+s03aggregate.py,24,    )
+s03aggregate.py,25,"    cur = unit[unit[""현재공실""]].groupby(group_cols, observed=True)[""현재공실개월""]"
+s03aggregate.py,26,"    u[""현재공실_중위개월""] = cur.median()"
+s03aggregate.py,27,"    u[""현재공실_%d개월이상"" % L12] = unit[unit[""현재공실개월""] >= L12].groupby(group_cols, observed=True).size()"
+s03aggregate.py,28,"    e = ep.groupby(group_cols, observed=True)[""공실개월""]"
+s03aggregate.py,29,"    u[""공실구간수""] = e.size()"
+s03aggregate.py,30,"    u[""공실_중위개월""] = e.median()"
+s03aggregate.py,31,"    for k in (L6, L12, L24):"
+s03aggregate.py,32,"        u[""공실_%d개월이상비율"" % k] = ep.assign(f=ep[""공실개월""] >= k).groupby(group_cols, observed=True)[""f""].mean() * 100"
+s03aggregate.py,33,"    u[""현재공실률(%)""] = 100 * u[""현재공실호수""] / u[""호수""]"
+s03aggregate.py,34,"    u = u.round(2).reset_index().sort_values(""호수"", ascending=False)"
+s03aggregate.py,35,"    common.save(common.mask_small(u), ""03_%s.csv"" % name)"
+s03aggregate.py,36,    return u
+s03aggregate.py,37,
+s03aggregate.py,38,
+s03aggregate.py,39,"ep = ep.merge(unit[[""호관리번호"", ""면적구간"", ""임대료분위_시군구내""]], on=""호관리번호"", how=""left"")"
+s03aggregate.py,40,"unit[""준공연차구간""] = pd.cut(unit[""준공연차""], [0, 5, 10, 15, 20, 100], labels=[""5년미만"", ""5~10"", ""10~15"", ""15~20"", ""20년이상""])"
+s03aggregate.py,41,"ep = ep.merge(unit[[""호관리번호"", ""준공연차구간""]], on=""호관리번호"", how=""left"")"
+s03aggregate.py,42,
+s03aggregate.py,43,"summarize([""시도""], ""시도별"")"
+s03aggregate.py,44,"sgg = summarize([""시도"", ""시군구""], ""시군구별"")"
+s03aggregate.py,45,"summarize([""공급유형""], ""공급유형별"")"
+s03aggregate.py,46,"summarize([""면적구간""], ""면적구간별"")"
+s03aggregate.py,47,"summarize([""공급유형"", ""면적구간""], ""공급유형x면적"")"
+s03aggregate.py,48,"summarize([""방수""], ""방수별"")"
+s03aggregate.py,49,"summarize([""준공연차구간""], ""준공연차별"")"
+s03aggregate.py,50,"summarize([""임대료분위_시군구내""], ""임대료분위별"")"
+s03aggregate.py,51,"summarize([""주택유형""], ""주택유형별"")"
+s03aggregate.py,52,
+s03aggregate.py,53,# 연도별 공실 발생 추이
+s03aggregate.py,54,"t = ep.groupby(""공실시작연도"").agg(호수=(""호관리번호"", ""size""), 공실_중위개월=(""공실개월"", ""median"")).reset_index()"
+s03aggregate.py,55,"common.save(common.mask_small(t), ""03_연도별_공실발생.csv"")"
+s03aggregate.py,56,
+s03aggregate.py,57,"print(""집계표 저장 완료 (그래프는 집에서 s05charts.py 로 생성)"")"
+s03aggregate.py,58,
+s04model.py,1,"""""""[본 분석 3] 지역 소득(KCB)·관리비 결합 + 장기공실 위험 모델."
+s04model.py,2,
+s04model.py,3,"- KCB 행정동 소득분포 -> 시군구(코드 앞 5자리) 단위로 합쳐 '저소득 비율', '20·30대 비율' 계산"
+s04model.py,4,- 관리비(2023.01~) -> 호별 ㎡당 평균 관리비
+s04model.py,5,- 목표: 현재 12개월 이상 공실이거나 과거 12개월 이상 공실 경험이 있는 호(장기공실 호)
+s04model.py,6,- 모델: 로지스틱 회귀 + 그래디언트 부스팅. 반출은 성능·변수중요도(집계)만.
+s04model.py,7,""""""""
+s04model.py,8,import numpy as np
+s04model.py,9,import pandas as pd
+s04model.py,10,import common
+s04model.py,11,import config
+s04model.py,12,
+s04model.py,13,"work = config.OUT_DIR + ""/work"""
+s04model.py,14,"unit = pd.read_csv(work + ""/호특성.csv"", dtype={""법정동코드"": str})"
+s04model.py,15,"unit[""시군구코드""] = unit[""법정동코드""].str[:5]"
+s04model.py,16,
+s04model.py,17,# KCB: 시군구 단위 소득 지표
+s04model.py,18,try:
+s04model.py,19,"    kcb = common.rename(common.read_csv(""kcb""), config.KCB_COLS)"
+s04model.py,20,"    cnt = [c for c in kcb.columns if c.startswith(""C"") and c.endswith(""_CNT"")]"
+s04model.py,21,"    kcb[cnt] = kcb[cnt].apply(pd.to_numeric, errors=""coerce"").fillna(0)"
+s04model.py,22,"    kcb = kcb[kcb[""기준시점""] == kcb[""기준시점""].max()]"
+s04model.py,23,"    kcb[""시군구코드""] = kcb[""행정동코드""].str[:5]"
+s04model.py,24,"    kcb[""전체""] = kcb[cnt].sum(axis=1)"
+s04model.py,25,"    kcb[""저소득""] = kcb[[""C1_CNT"", ""C2_CNT""]].sum(axis=1)  # 월 150만원 이하"
+s04model.py,26,"    kcb[""청년""] = np.where(kcb[""연령""].isin([""20"", ""30""]), kcb[""전체""], 0)"
+s04model.py,27,"    reg = kcb.groupby(""시군구코드"")[[""전체"", ""저소득"", ""청년""]].sum()"
+s04model.py,28,"    reg[""저소득비율""] = reg[""저소득""] / reg[""전체""]"
+s04model.py,29,"    reg[""2030비율""] = reg[""청년""] / reg[""전체""]"
+s04model.py,30,"    unit = unit.merge(reg[[""저소득비율"", ""2030비율""]], left_on=""시군구코드"", right_index=True, how=""left"")"
+s04model.py,31,"    common.save(reg.reset_index()[[""시군구코드"", ""저소득비율"", ""2030비율""]].round(4), ""04_시군구_소득지표.csv"")"
+s04model.py,32,except FileNotFoundError:
+s04model.py,33,"    print(""KCB 없음 - 건너뜀"")"
+s04model.py,34,
+s04model.py,35,# 관리비: 호별 ㎡당 월평균 관리비 (큰 파일이라 나눠 읽기)
+s04model.py,36,try:
+s04model.py,37,    parts = []
+s04model.py,38,"    for ch in common.read_csv(""fee"", chunksize=500000):"
+s04model.py,39,"        ch = common.rename(ch, config.FEE_COLS)"
+s04model.py,40,"        ch[""당월관리비""] = pd.to_numeric(ch[""당월관리비""], errors=""coerce"")"
+s04model.py,41,"        parts.append(ch.groupby(""호관리번호"")[""당월관리비""].agg([""sum"", ""count""]))"
+s04model.py,42,    fee = pd.concat(parts).groupby(level=0).sum()
+s04model.py,43,"    unit = unit.merge((fee[""sum""] / fee[""count""]).rename(""월평균관리비""), left_on=""호관리번호"", right_index=True, how=""left"")"
+s04model.py,44,"    unit[""㎡당관리비""] = unit[""월평균관리비""] / unit[""전용면적""]"
+s04model.py,45,except FileNotFoundError:
+s04model.py,46,"    print(""관리비 없음 - 건너뜀"")"
+s04model.py,47,
+s04model.py,48,"unit[""장기공실호""] = ((unit[""최장공실개월""] >= 12) | (unit[""현재공실개월""] >= 12)).astype(int)"
+s04model.py,49,"num = [c for c in [""전용면적"", ""방수"", ""준공연차"", ""임대보증금"", ""임대료"", ""㎡당임대료"", ""초기미임대개월"","
+s04model.py,50,"                   ""중도해약수"", ""저소득비율"", ""2030비율"", ""㎡당관리비""] if c in unit.columns]"
+s04model.py,51,"cat = [""시도"", ""공급유형"", ""주택유형"", ""난방방식""]"
+s04model.py,52,"X = pd.get_dummies(unit[num + cat], columns=cat, dummy_na=True).astype(float)"
+s04model.py,53,X = X.fillna(X.median())
+s04model.py,54,"y = unit[""장기공실호""]"
+s04model.py,55,"print(""장기공실 호 비율: %.1f%%"" % (100 * y.mean()))"
+s04model.py,56,
+s04model.py,57,from sklearn.model_selection import train_test_split
+s04model.py,58,from sklearn.metrics import roc_auc_score
+s04model.py,59,from sklearn.linear_model import LogisticRegression
+s04model.py,60,from sklearn.preprocessing import StandardScaler
+s04model.py,61,from sklearn.pipeline import make_pipeline
+s04model.py,62,from sklearn.ensemble import GradientBoostingClassifier
+s04model.py,63,from sklearn.inspection import permutation_importance
+s04model.py,64,
+s04model.py,65,"Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, random_state=0, stratify=y)"
+s04model.py,66,res = []
+s04model.py,67,"lr = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000)).fit(Xtr, ytr)"
+s04model.py,68,"res.append({""모델"": ""로지스틱회귀"", ""AUC"": roc_auc_score(yte, lr.predict_proba(Xte)[:, 1])})"
+s04model.py,69,"gb = GradientBoostingClassifier(random_state=0).fit(Xtr, ytr)"
+s04model.py,70,"res.append({""모델"": ""그래디언트부스팅"", ""AUC"": roc_auc_score(yte, gb.predict_proba(Xte)[:, 1])})"
+s04model.py,71,"common.save(pd.DataFrame(res).round(3), ""04_모델성능.csv"")"
+s04model.py,72,
+s04model.py,73,"pi = permutation_importance(gb, Xte, yte, n_repeats=5, random_state=0, scoring=""roc_auc"")"
+s04model.py,74,"imp = pd.DataFrame({""변수"": X.columns, ""중요도"": pi.importances_mean}).sort_values(""중요도"", ascending=False)"
+s04model.py,75,"common.save(imp.round(4), ""04_변수중요도.csv"")"
+s04model.py,76,"coef = pd.DataFrame({""변수"": X.columns, ""계수(표준화)"": lr[-1].coef_[0]}).sort_values(""계수(표준화)"")"
+s04model.py,77,"common.save(coef.round(4), ""04_로지스틱_계수.csv"")"
+s04model.py,78,
+s04model.py,79,# 시군구별 예측 위험(평균) - 집계만 반출
+s04model.py,80,"unit[""예측위험""] = gb.predict_proba(X)[:, 1]"
+s04model.py,81,"r = unit.groupby([""시도"", ""시군구""]).agg(호수=(""호관리번호"", ""size""), 평균예측위험=(""예측위험"", ""mean""),"
+s04model.py,82,"                                       실제장기공실비율=(""장기공실호"", ""mean"")).reset_index()"
+s04model.py,83,"common.save(common.mask_small(r.round(3)), ""04_시군구_예측위험.csv"")"
+s04model.py,84,
+s04model.py,85,print(pd.DataFrame(res))
+s04model.py,86,
+s05charts.py,1,"""""""[집에서 실행] 반출한 CSV로 기획서용 그래프 만들기."
+s05charts.py,2,
+s05charts.py,3,센터 반출이 CSV만 가능하므로 그래프는 밖에서 그린다.
+s05charts.py,4,사용: 반출받은 CSV를 output/export/ 에 넣고 python s05charts.py
+s05charts.py,5,결과: output/charts/*.png
+s05charts.py,6,""""""""
+s05charts.py,7,import os
+s05charts.py,8,import pandas as pd
+s05charts.py,9,import common
+s05charts.py,10,import config
+s05charts.py,11,
+s05charts.py,12,"EXP = os.path.join(config.OUT_DIR, ""export"")"
+s05charts.py,13,"CH = common.ensure_out(""charts"")"
+s05charts.py,14,plt = common.setup_korean_font()
+s05charts.py,15,"PURPLE, ORANGE = ""#4b3a9a"", ""#e8612c"""
+s05charts.py,16,
+s05charts.py,17,
+s05charts.py,18,def load(name):
+s05charts.py,19,"    path = os.path.join(EXP, name)"
+s05charts.py,20,    if not os.path.exists(path):
+s05charts.py,21,"        print(""없음(건너뜀):"", name)"
+s05charts.py,22,        return None
+s05charts.py,23,"    df = pd.read_csv(path, encoding=""utf-8-sig"")"
+s05charts.py,24,"    df[""호수""] = pd.to_numeric(df[""호수""], errors=""coerce"") if ""호수"" in df.columns else None"
+s05charts.py,25,    return df
+s05charts.py,26,
+s05charts.py,27,
+s05charts.py,28,"def bar(df, x, y, title, fname, horizontal=False, color=PURPLE, top=None):"
+s05charts.py,29,    d = df.dropna(subset=[y])
+s05charts.py,30,    if top:
+s05charts.py,31,"        d = d.nlargest(top, y)"
+s05charts.py,32,"    fig, ax = plt.subplots(figsize=(7, 4.5 if horizontal else 4))"
+s05charts.py,33,    if horizontal:
+s05charts.py,34,"        ax.barh(d[x].astype(str), d[y], color=color); ax.invert_yaxis(); ax.set_xlabel(y)"
+s05charts.py,35,    else:
+s05charts.py,36,"        ax.bar(d[x].astype(str), d[y], color=color); ax.set_ylabel(y); plt.xticks(rotation=30, ha=""right"")"
+s05charts.py,37,    ax.set_title(title)
+s05charts.py,38,"    plt.tight_layout(); plt.savefig(os.path.join(CH, fname), dpi=200); plt.close()"
+s05charts.py,39,"    print(""그래프:"", fname)"
+s05charts.py,40,
+s05charts.py,41,
+s05charts.py,42,"sgg = load(""03_시군구별.csv"")"
+s05charts.py,43,if sgg is not None:
+s05charts.py,44,"    sgg[""지역""] = sgg[""시도""].str[:2] + "" "" + sgg[""시군구""]"
+s05charts.py,45,"    bar(sgg, ""지역"", ""현재공실률(%)"", ""현재 공실률 상위 시군구"", ""01_시군구_공실률_상위.png"", True, ORANGE, top=15)"
+s05charts.py,46,"    bar(sgg, ""지역"", ""공실_12개월이상비율"", ""12개월 이상 장기공실 비율 상위 시군구"", ""02_시군구_장기공실_상위.png"", True, ORANGE, top=15)"
+s05charts.py,47,"for f, col, title, out in ["
+s05charts.py,48,"    (""03_시도별.csv"", ""시도"", ""시도별 현재 공실률"", ""03_시도별_공실률.png""),"
+s05charts.py,49,"    (""03_면적구간별.csv"", ""면적구간"", ""면적별 현재 공실률"", ""04_면적별_공실률.png""),"
+s05charts.py,50,"    (""03_공급유형별.csv"", ""공급유형"", ""공급유형별 현재 공실률"", ""05_공급유형별_공실률.png""),"
+s05charts.py,51,"    (""03_준공연차별.csv"", ""준공연차구간"", ""준공연차별 현재 공실률"", ""06_준공연차별_공실률.png""),"
+s05charts.py,52,"    (""03_임대료분위별.csv"", ""임대료분위_시군구내"", ""시군구 내 임대료 수준별 현재 공실률"", ""07_임대료분위별_공실률.png""),"
+s05charts.py,53,"    (""03_방수별.csv"", ""방수"", ""방 수별 현재 공실률"", ""08_방수별_공실률.png""),"
+s05charts.py,54,]:
+s05charts.py,55,    d = load(f)
+s05charts.py,56,    if d is not None:
+s05charts.py,57,"        bar(d.sort_values(col), col, ""현재공실률(%)"", title, out)"
+s05charts.py,58,
+s05charts.py,59,"d = load(""03_공급유형x면적.csv"")"
+s05charts.py,60,if d is not None:
+s05charts.py,61,"    p = d.pivot_table(index=""공급유형"", columns=""면적구간"", values=""현재공실률(%)"")"
+s05charts.py,62,    p = p[[c for c in config.AREA_LABELS if c in p.columns]]
+s05charts.py,63,"    fig, ax = plt.subplots(figsize=(7, 3.8))"
+s05charts.py,64,"    im = ax.imshow(p.values, cmap=""Oranges"", aspect=""auto"")"
+s05charts.py,65,    ax.set_xticks(range(len(p.columns))); ax.set_xticklabels(p.columns)
+s05charts.py,66,    ax.set_yticks(range(len(p.index))); ax.set_yticklabels(p.index)
+s05charts.py,67,    for i in range(p.shape[0]):
+s05charts.py,68,        for j in range(p.shape[1]):
+s05charts.py,69,"            v = p.values[i, j]"
+s05charts.py,70,"            ax.text(j, i, """" if pd.isna(v) else ""%.1f"" % v, ha=""center"", va=""center"", fontsize=8)"
+s05charts.py,71,"    fig.colorbar(im, label=""현재 공실률(%)""); ax.set_title(""공급유형 × 면적 현재 공실률"")"
+s05charts.py,72,"    plt.tight_layout(); plt.savefig(os.path.join(CH, ""09_공급유형x면적_히트맵.png""), dpi=200); plt.close()"
+s05charts.py,73,"    print(""그래프: 09_공급유형x면적_히트맵.png"")"
+s05charts.py,74,
+s05charts.py,75,"d = load(""03_연도별_공실발생.csv"")"
+s05charts.py,76,if d is not None:
+s05charts.py,77,"    d = d.dropna(subset=[""공실_중위개월""])"
+s05charts.py,78,"    fig, ax = plt.subplots(figsize=(7, 4))"
+s05charts.py,79,"    ax.plot(d[""공실시작연도""], d[""공실_중위개월""], marker=""o"", color=PURPLE)"
+s05charts.py,80,"    ax.set_ylabel(""공실 기간 중위값(개월)""); ax.set_title(""공실 시작 연도별 공실 기간 추이"")"
+s05charts.py,81,"    plt.tight_layout(); plt.savefig(os.path.join(CH, ""10_연도별_공실기간.png""), dpi=200); plt.close()"
+s05charts.py,82,"    print(""그래프: 10_연도별_공실기간.png"")"
+s05charts.py,83,
+s05charts.py,84,"d = load(""04_변수중요도.csv"")"
+s05charts.py,85,if d is not None:
+s05charts.py,86,"    bar(d.head(15), ""변수"", ""중요도"", ""장기공실 예측 변수 중요도 (상위 15)"", ""11_변수중요도.png"", True, PURPLE)"
+s05charts.py,87,"d = load(""04_시군구_예측위험.csv"")"
+s05charts.py,88,if d is not None:
+s05charts.py,89,"    d[""지역""] = d[""시도""].str[:2] + "" "" + d[""시군구""]"
+s05charts.py,90,"    bar(d, ""지역"", ""평균예측위험"", ""장기공실 예측 위험 상위 시군구"", ""12_시군구_예측위험_상위.png"", True, ORANGE, top=15)"
+s05charts.py,91,"print(""완료:"", CH)"
+s05charts.py,92,
+s06dashboard.py,1,"""""""[집에서 실행] 반출 CSV를 묶어 대시보드 HTML 한 파일 생성."
+s06dashboard.py,2,
+s06dashboard.py,3,사용: python s06dashboard.py   → ../app/dashboard.html
+s06dashboard.py,4,반출 CSV가 output/export/ 에 있어야 한다. 실제 데이터로 바꾸면 다시 실행만 하면 된다.
+s06dashboard.py,5,""""""""
+s06dashboard.py,6,import json
+s06dashboard.py,7,import os
+s06dashboard.py,8,import pandas as pd
+s06dashboard.py,9,import config
+s06dashboard.py,10,
+s06dashboard.py,11,"EXP = os.path.join(config.OUT_DIR, ""export"")"
+s06dashboard.py,12,"APP = os.path.join(os.path.dirname(__file__), "".."", ""app"")"
+s06dashboard.py,13,"FILES = {""sido"": ""03_시도별.csv"", ""sgg"": ""03_시군구별.csv"", ""area"": ""03_면적구간별.csv"","
+s06dashboard.py,14,"         ""supply"": ""03_공급유형별.csv"", ""sxa"": ""03_공급유형x면적.csv"", ""built"": ""03_준공연차별.csv"","
+s06dashboard.py,15,"         ""rent"": ""03_임대료분위별.csv"", ""rooms"": ""03_방수별.csv"", ""year"": ""03_연도별_공실발생.csv"","
+s06dashboard.py,16,"         ""imp"": ""04_변수중요도.csv"", ""perf"": ""04_모델성능.csv"", ""risk"": ""04_시군구_예측위험.csv""}"
+s06dashboard.py,17,data = {}
+s06dashboard.py,18,"for k, f in FILES.items():"
+s06dashboard.py,19,"    p = os.path.join(EXP, f)"
+s06dashboard.py,20,    if os.path.exists(p):
+s06dashboard.py,21,"        df = pd.read_csv(p, encoding=""utf-8-sig"")"
+s06dashboard.py,22,"        data[k] = json.loads(df.to_json(orient=""records"", force_ascii=False))"
+s06dashboard.py,23,    else:
+s06dashboard.py,24,        data[k] = []
+s06dashboard.py,25,"        print(""없음:"", f)"
+s06dashboard.py,26,"is_fake = os.path.abspath(config.DATA_DIR).endswith(""fake_data"")"
+s06dashboard.py,27,"meta = {""fake"": is_fake, ""built"": pd.Timestamp.now().strftime(""%Y-%m-%d""), ""min_cell"": config.MIN_CELL}"
+s06dashboard.py,28,"_tp = os.path.join(APP, ""template.html"")"
+s06dashboard.py,29,if not os.path.exists(_tp):  # 센터 반입본은 확장자 제한으로 template.txt
+s06dashboard.py,30,"    _tp = os.path.join(os.path.dirname(os.path.abspath(__file__)), ""template.txt"")"
+s06dashboard.py,31,"tpl = open(_tp, encoding=""utf-8"").read()"
+s06dashboard.py,32,"os.makedirs(APP, exist_ok=True)"
+s06dashboard.py,33,"html = tpl.replace(""/*__DATA__*/"", ""const DATA="" + json.dumps(data, ensure_ascii=False) + "";const META="" + json.dumps(meta, ensure_ascii=False) + "";"")"
+s06dashboard.py,34,"out = os.path.join(APP, ""dashboard.html"")"
+s06dashboard.py,35,"open(out, ""w"", encoding=""utf-8"").write(html)"
+s06dashboard.py,36,"print(""생성:"", out, ""(%.1f KB)"" % (len(html.encode()) / 1024), ""연습데이터"" if is_fake else ""실데이터"")"
+s06dashboard.py,37,
+runall.py,1,"""""""센터: python runall.py (CSV만 생성) / 집 연습: python runall.py --fake (가짜 데이터 + 그래프)"
+runall.py,2,"집에서 반출 CSV로 그래프만: python s05charts.py"""""""
+runall.py,3,import runpy
+runall.py,4,import sys
+runall.py,5,
+runall.py,6,"steps = [""s01profile.py"", ""s02vacancy.py"", ""s02bcomplex.py"", ""s03aggregate.py"", ""s04model.py""]"
+runall.py,7,"if ""--charts"" in sys.argv or ""--fake"" in sys.argv:"
+runall.py,8,"    steps = steps + [""s05charts.py"", ""s06dashboard.py""]"
+runall.py,9,"if ""--fake"" in sys.argv:"
+runall.py,10,"    steps = [""s00fake.py""] + steps[:-1] + [""s07match.py"", steps[-1]]  # 07은 외부 공공 단지정보 필요(센터 밖)"
+runall.py,11,for s in steps:
+runall.py,12,"    print(""\n=========="", s, ""=========="")"
+runall.py,13,"    runpy.run_path(s, run_name=""__main__"")"
+runall.py,14,
+template.txt,1,"<!doctype html><html lang=""ko""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1"">"
+template.txt,2,<title>빈집 레이더</title>
+template.txt,3,<style>
+template.txt,4,:root{--bg:#f6f5fb;--card:#fff;--ink:#222;--mute:#666;--line:#e3dff2;--p:#4b3a9a;--o:#e8612c;--p2:#eeeaf9}
+template.txt,5,@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#15131f;--card:#1f1c2e;--ink:#eee;--mute:#aaa;--line:#332e4a;--p2:#2a2540}}
+template.txt,6,:root[data-theme=dark]{--bg:#15131f;--card:#1f1c2e;--ink:#eee;--mute:#aaa;--line:#332e4a;--p2:#2a2540}
+template.txt,7,"*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:""Pretendard"",""Malgun Gothic"",""Apple SD Gothic Neo"",sans-serif;font-size:14px}"
+template.txt,8,header{background:var(--p);color:#fff;padding:14px 16px}header h1{margin:0;font-size:18px}header p{margin:4px 0 0;font-size:12px;opacity:.85}
+template.txt,9,.warn{background:#fff3cd;color:#6b4e00;padding:6px 16px;font-size:12px}
+template.txt,10,nav{display:flex;gap:4px;padding:8px 16px 0;overflow-x:auto;border-bottom:1px solid var(--line);background:var(--card)}
+template.txt,11,nav button{border:0;background:none;padding:10px 12px;font-size:14px;color:var(--mute);border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap}
+template.txt,12,nav button.on{color:var(--p);border-color:var(--p);font-weight:700}
+template.txt,13,main{padding:16px;max-width:1200px;margin:0 auto}section{display:none}section.on{display:block}
+template.txt,14,".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}"
+template.txt,15,.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+template.txt,16,".kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}"
+template.txt,17,.kpi .card b{display:block;font-size:24px;color:var(--p)}.kpi .card span{font-size:12px;color:var(--mute)}
+template.txt,18,h2{font-size:15px;margin:0 0 10px}h3{font-size:13px;margin:0 0 8px;color:var(--mute)}
+template.txt,19,.ch{width:100%;height:320px;display:block}.tall .ch{height:460px}.ch text{fill:var(--ink);font-size:11px}.ch .ax{stroke:var(--line)}.ch .tip{font-size:10px;fill:var(--mute)}
+template.txt,20,"table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right}"
+template.txt,21,"th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}.heat th,.heat td{white-space:normal;font-size:11px}th{cursor:pointer;background:var(--p2);position:sticky;top:0}"
+template.txt,22,.tbl{max-height:420px;overflow:auto}.ctrl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+template.txt,23,"select,input{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-size:13px}"
+template.txt,24,.bar{height:8px;background:var(--o);border-radius:4px;display:inline-block;vertical-align:middle}
+template.txt,25,.heat td{text-align:center}.heat td.c{color:#fff;font-weight:600}
+template.txt,26,.prop .card{border-left:4px solid var(--o)}.prop b{display:block;margin-bottom:4px}.prop p{margin:0;font-size:13px;color:var(--mute)}
+template.txt,27,footer{color:var(--mute);font-size:12px;padding:16px;text-align:center}
+template.txt,28,</style></head><body>
+template.txt,29,<header><h1>빈집 레이더 — LH 임대주택 장기공실 진단·예측</h1><p>2026 데이터안심구역 경진대회 · 호별 계약 이력 기반 공실 분석 (호수 <span id=mc></span> 미만 칸은 비공개)</p></header>
+template.txt,30,<div class=warn id=warn hidden>⚠ 지금 보이는 숫자는 코드 검증용 <b>연습(가짜) 데이터</b>입니다. 실제 분석 결과가 아닙니다.</div>
+template.txt,31,<nav><button data-t=ov class=on>개요</button><button data-t=rg>지역 탐색</button><button data-t=fx>공실 요인</button><button data-t=pr>위험 예측</button><button data-t=pp>제안·방법</button></nav>
+template.txt,32,<main>
+template.txt,33,<section id=ov class=on>
+template.txt,34, <div class=kpi id=kpis></div>
+template.txt,35, <div class=grid><div class=card><h2>시도별 현재 공실률</h2><svg class=ch id=cSido></svg></div>
+template.txt,36, <div class=card><h2>연도별 공실 기간 추이</h2><svg class=ch id=cYear></svg></div></div>
+template.txt,37,</section>
+template.txt,38,<section id=rg>
+template.txt,39," <div class=card><div class=ctrl><select id=fSido><option value="""">전체 시도</option></select><input id=fQ placeholder=""시군구 검색""><select id=fSort><option value=""현재공실률(%)"">공실률순</option><option value=""공실_12개월이상비율"">장기공실 비율순</option><option value=""호수"">호수순</option><option value=""현재공실_중위개월"">현재공실 기간순</option></select></div>"
+template.txt,40," <div class=grid><div class=""card tall""><h2>상위 15 시군구</h2><svg class=ch id=cSgg></svg></div>"
+template.txt,41, <div class=card><h2>시군구 표</h2><div class=tbl><table id=tSgg></table></div></div></div></div>
+template.txt,42,</section>
+template.txt,43,<section id=fx>
+template.txt,44, <div class=grid>
+template.txt,45, <div class=card><h2>면적별 공실률</h2><svg class=ch id=cArea></svg></div>
+template.txt,46, <div class=card><h2>공급유형별 공실률</h2><svg class=ch id=cSupply></svg></div>
+template.txt,47, <div class=card><h2>준공연차별 공실률</h2><svg class=ch id=cBuilt></svg></div>
+template.txt,48, <div class=card><h2>시군구 내 임대료 수준별 공실률</h2><svg class=ch id=cRent></svg></div>
+template.txt,49, <div class=card><h2>방 수별 공실률</h2><svg class=ch id=cRooms></svg></div>
+template.txt,50, <div class=card><h2>공급유형 × 면적 공실률(%)</h2><div class=tbl><table id=tHeat class=heat></table></div></div>
+template.txt,51, </div>
+template.txt,52,</section>
+template.txt,53,<section id=pr>
+template.txt,54," <div class=grid><div class=""card tall""><h2>장기공실 예측 변수 중요도</h2><svg class=ch id=cImp></svg></div>"
+template.txt,55," <div class=card><h2>모델 성능</h2><table id=tPerf></table><h3 style=""margin-top:12px"">예측 위험 상위 시군구</h3><div class=tbl><table id=tRisk></table></div></div></div>"
+template.txt,56,</section>
+template.txt,57,<section id=pp>
+template.txt,58," <div class=""grid prop"">"
+template.txt,59," <div class=card><b>1. 공실 위험 단지 선제 관리</b><p>예측 위험 상위 지역·유형에 모집 공고 우선 배치, 입주 조건·임대료 조정 검토</p></div>"
+template.txt,60," <div class=card><b>2. 소형 평형 재구성</b><p>장기공실이 집중된 소형(40㎡ 미만) 세대 통합 리모델링, 1~2인 가구 맞춤 설비 개선</p></div>"
+template.txt,61," <div class=card><b>3. 지역 수요 맞춤 공급</b><p>지역 소득·청년 비율과 공급유형의 불일치 지역에 평형·유형 조정, 신규 공급 입지 기준에 공실 위험 반영</p></div>"
+template.txt,62, <div class=card><b>4. 공실 조기경보</b><p>계약 종료 예정 호와 과거 공실 패턴으로 다음 분기 공실 발생 예측 → 사전 마케팅</p></div>
+template.txt,63, </div>
+template.txt,64," <div class=card style=""margin-top:12px""><h2>데이터와 방법</h2>"
+template.txt,65," <p>② 상호제공: LH 건설임대 계약(2009.02~2026.07)·관리비(2023.01~), KCB 행정동 소득, SKT 유동인구(서울) · ① K-data 고유: 교통카드·소득분위(확인 중) · ③ 공공: 전월세 실거래가, 인구, 교통·시설 위치</p>"
+template.txt,66, <p><b>공실 정의</b>: 같은 호에서 계약 종료(해약 시 해약월) 다음 달부터 다음 계약 시작 전 달까지. 다음 계약이 없고 2026.07 이전 종료면 '공실 진행 중'. <b>장기공실 호</b>: 12개월 이상 공실 경험 또는 현재 12개월 이상 공실.</p>
+template.txt,67," <p><b>모델</b>: 로지스틱 회귀·그래디언트 부스팅으로 장기공실 호 예측, 순열 중요도로 요인 해석. 모든 수치는 지역·유형 단위 집계이며 소수 칸은 비공개.</p></div>"
+template.txt,68,</section>
+template.txt,69,</main>
+template.txt,70,<footer>빈집 레이더 · 생성일 <span id=built></span> · 데이터안심구역 반출 집계 기반</footer>
+template.txt,71,<script>
+template.txt,72,/*__DATA__*/
+template.txt,73,"const $=s=>document.querySelector(s),P='#4b3a9a',O='#e8612c';"
+template.txt,74,document.getElementById('mc').textContent=META.min_cell;$('#built').textContent=META.built;if(META.fake)$('#warn').hidden=false;
+template.txt,75,"document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.t).classList.add('on');render();});"
+template.txt,76,"let render=()=>{};let sortKey='현재공실률(%)',sortDir=-1;"
+template.txt,77,const num=v=>(v===null||v===undefined||v==='')?null:(typeof v==='number'?v:(isNaN(+v)?null:+v));
+template.txt,78,const ok=r=>num(r['호수'])!==null;
+template.txt,79,"function draw(id,labels,vals,{h=false,color=P,label='',line=false,vals2=null,color2=O}={}){const el=$('#'+id);const W=el.clientWidth||600,H=el.clientHeight||320;el.setAttribute('viewBox',`0 0 ${W} ${H}`);el.innerHTML='';"
+template.txt,80,"const ns='http://www.w3.org/2000/svg',mk=(t,a,tx)=>{const e=document.createElementNS(ns,t);for(const k in a)e.setAttribute(k,a[k]);if(tx!=null)e.textContent=tx;el.appendChild(e);return e;};"
+template.txt,81,"const v=vals.map(x=>x==null?0:x),n=v.length;if(!n){mk('text',{x:W/2,y:H/2,'text-anchor':'middle'},'데이터 없음');return;}"
+template.txt,82,"const mx=Math.max(...v,...(vals2||[0]))*1.1||1;"
+template.txt,83,"if(h){const L=Math.min(150,W*0.35),T=8,bh=(H-T-8)/n;v.forEach((x,i)=>{const y=T+i*bh;mk('rect',{x:L,y:y+bh*0.15,width:(W-L-50)*x/mx,height:bh*0.7,rx:3,fill:color});mk('text',{x:L-6,y:y+bh*0.62,'text-anchor':'end'},String(labels[i]).slice(0,14));mk('text',{x:L+(W-L-50)*x/mx+4,y:y+bh*0.62,class:'tip'},fmtv(x));});return;}"
+template.txt,84,"const L=40,B=H-48,T=12,bw=(W-L-10)/n;mk('line',{x1:L,y1:B,x2:W-5,y2:B,class:'ax'});"
+template.txt,85,"for(let g=0;g<=4;g++){const y=B-(B-T)*g/4;mk('line',{x1:L,y1:y,x2:W-5,y2:y,class:'ax','stroke-dasharray':'2 3'});mk('text',{x:L-4,y:y+4,'text-anchor':'end',class:'tip'},fmtv(mx*g/4));}"
+template.txt,86,"labels.forEach((lb,i)=>{const t=mk('text',{x:L+bw*(i+.5),y:B+14,'text-anchor':n>8?'end':'middle'},String(lb).slice(0,10));if(n>8)t.setAttribute('transform',`rotate(-30 ${L+bw*(i+.5)} ${B+14})`);});"
+template.txt,87,"if(line){const pts=a=>a.map((x,i)=>`${L+bw*(i+.5)},${B-(B-T)*(x||0)/mx}`).join(' ');mk('polyline',{points:pts(v),fill:'none',stroke:color,'stroke-width':2});v.forEach((x,i)=>mk('circle',{cx:L+bw*(i+.5),cy:B-(B-T)*x/mx,r:3,fill:color}));"
+template.txt,88,"if(vals2){mk('polyline',{points:pts(vals2),fill:'none',stroke:color2,'stroke-width':2,'stroke-dasharray':'4 3'});mk('text',{x:W-8,y:T+10,'text-anchor':'end',class:'tip'},'실선: '+label+' / 점선: '+(arguments[3].label2||''));}}"
+template.txt,89,"else v.forEach((x,i)=>{const bh=(B-T)*x/mx;mk('rect',{x:L+bw*(i+.15),y:B-bh,width:bw*.7,height:bh,rx:3,fill:color});mk('text',{x:L+bw*(i+.5),y:B-bh-4,'text-anchor':'middle',class:'tip'},fmtv(x));});}"
+template.txt,90,const fmtv=x=>x==null?'':(Math.abs(x)>=100?Math.round(x).toLocaleString():(+x).toFixed(Math.abs(x)<1?2:1));
+template.txt,91,"function bar(id,labels,vals,o={}){draw(id,labels,vals,o);}"
+template.txt,92,"function simple(id,rows,key,color){rows=rows.filter(ok);bar(id,rows.map(r=>String(r[key])),rows.map(r=>num(r['현재공실률(%)'])),{color});}"
+template.txt,93,function renderAll(){
+template.txt,94,"(function(){const s=DATA.sido.filter(ok);const tot=s.reduce((a,r)=>a+num(r['호수']),0),vac=s.reduce((a,r)=>a+(num(r['현재공실호수'])||0),0);"
+template.txt,95,"const l12=DATA.area.filter(ok);const long=l12.length?Math.round(l12.reduce((a,r)=>a+(num(r['공실_12개월이상비율'])||0)*num(r['호수']),0)/l12.reduce((a,r)=>a+num(r['호수']),0)*10)/10:'-';"
+template.txt,96,"const top=[...DATA.sgg.filter(ok)].sort((a,b)=>num(b['현재공실률(%)'])-num(a['현재공실률(%)']))[0];"
+template.txt,97,"$('#kpis').innerHTML=[['분석 호수',tot.toLocaleString()+'호'],['현재 공실 호',vac.toLocaleString()+'호'],['현재 공실률',(100*vac/tot).toFixed(1)+'%'],['공실 중 12개월 이상',long+'%'],['공실률 최고 지역',top?top['시군구']+' '+num(top['현재공실률(%)']).toFixed(1)+'%':'-']].map(([k,v])=>`<div class=card><b>${v}</b><span>${k}</span></div>`).join('');"
+template.txt,98,"simple('cSido',[...s].sort((a,b)=>num(b['현재공실률(%)'])-num(a['현재공실률(%)'])),'시도',P);"
+template.txt,99,"const y=DATA.year.filter(ok);draw('cYear',y.map(r=>r['공실시작연도']),y.map(r=>num(r['공실_중위개월'])),{line:true,label:'공실 기간 중위값(개월)'});})();"
+template.txt,100,// 지역
+template.txt,101,"if(!$('#fSido').dataset.i){$('#fSido').dataset.i=1;[...new Set(DATA.sgg.map(r=>r['시도']))].forEach(s=>$('#fSido').insertAdjacentHTML('beforeend',`<option>${s}</option>`));}"
+template.txt,102,"const COLS=['시도','시군구','호수','현재공실률(%)','현재공실호수','현재공실_중위개월','공실_중위개월','공실_12개월이상비율','초기미임대_중위개월','중도해약_호당평균'];"
+template.txt,103,"function region(){const sd=$('#fSido').value,q=$('#fQ').value.trim();let rows=DATA.sgg.filter(r=>ok(r)&&(!sd||r['시도']===sd)&&(!q||String(r['시군구']).includes(q)));"
+template.txt,104,"rows.sort((a,b)=>((num(b[sortKey])??-1)-(num(a[sortKey])??-1))*-sortDir);const t=rows.slice(0,15);"
+template.txt,105,"bar('cSgg',t.map(r=>r['시도'].slice(0,2)+' '+r['시군구']),t.map(r=>num(r[sortKey])),{h:true,color:O,label:sortKey});"
+template.txt,106,"$('#tSgg').innerHTML='<tr>'+COLS.map(c=>`<th data-k=""${c}"">${c.replace('_',' ')}${c===sortKey?(sortDir<0?' ▼':' ▲'):''}</th>`).join('')+'</tr>'+rows.map(r=>'<tr>'+COLS.map(c=>`<td>${fmt(r[c])}</td>`).join('')+'</tr>').join('');"
+template.txt,107,$('#tSgg').querySelectorAll('th').forEach(h=>h.onclick=()=>{if(sortKey===h.dataset.k)sortDir*=-1;else{sortKey=h.dataset.k;sortDir=-1;}$('#fSort').value=sortKey;region();});}
+template.txt,108,const fmt=v=>{const n=num(v);return n===null?(v??''):(Number.isInteger(n)?n.toLocaleString():n.toFixed(1));};
+template.txt,109,"['fSido','fQ','fSort'].forEach(i=>$('#'+i).oninput=()=>{if(i==='fSort'){sortKey=$('#fSort').value;sortDir=-1;}region();});region();"
+template.txt,110,// 요인
+template.txt,111,"simple('cArea',DATA.area,'면적구간',P);simple('cSupply',DATA.supply,'공급유형',P);simple('cBuilt',DATA.built,'준공연차구간',P);simple('cRent',DATA.rent,'임대료분위_시군구내',P);simple('cRooms',DATA.rooms,'방수',P);"
+template.txt,112,"(function(){const rows=DATA.sxa.filter(ok);const areas=['30미만','30~40','40~50','50~60','60~85','85이상'].filter(a=>rows.some(r=>r['면적구간']===a));const sups=[...new Set(rows.map(r=>r['공급유형']))];"
+template.txt,113,const mx=Math.max(...rows.map(r=>num(r['현재공실률(%)'])||0));
+template.txt,114,"$('#tHeat').innerHTML='<tr><th>공급유형</th>'+areas.map(a=>`<th>${a}㎡</th>`).join('')+'</tr>'+sups.map(s=>'<tr><td style=""text-align:left"">'+s+'</td>'+areas.map(a=>{const r=rows.find(x=>x['공급유형']===s&&x['면적구간']===a);const v=r?num(r['현재공실률(%)']):null;if(v===null)return'<td>-</td>';const k=v/mx;return`<td class=c style=""background:rgba(232,97,44,${(0.15+0.85*k).toFixed(2)})"">${v.toFixed(1)}</td>`;}).join('')+'</tr>').join('');})();"
+template.txt,115,// 예측
+template.txt,116,"(function(){const imp=DATA.imp.slice(0,15);bar('cImp',imp.map(r=>r['변수']),imp.map(r=>num(r['중요도'])),{h:true,color:P,label:'순열 중요도'});"
+template.txt,117,"$('#tPerf').innerHTML='<tr><th style=""text-align:left"">모델</th><th>AUC</th></tr>'+DATA.perf.map(r=>`<tr><td>${r['모델']}</td><td>${fmt(r['AUC'])}</td></tr>`).join('');"
+template.txt,118,"const rk=DATA.risk.filter(ok).sort((a,b)=>num(b['평균예측위험'])-num(a['평균예측위험'])).slice(0,20);const mx=Math.max(...rk.map(r=>num(r['평균예측위험'])));"
+template.txt,119,"$('#tRisk').innerHTML='<tr><th>시도</th><th>시군구</th><th>호수</th><th>예측 위험</th><th>실제 장기공실</th></tr>'+rk.map(r=>`<tr><td>${r['시도']}</td><td>${r['시군구']}</td><td>${fmt(r['호수'])}</td><td><span class=bar style=""width:${80*num(r['평균예측위험'])/mx}px""></span> ${(100*num(r['평균예측위험'])).toFixed(0)}%</td><td>${(100*num(r['실제장기공실비율'])).toFixed(0)}%</td></tr>`).join('');})();"
+template.txt,120,}
+template.txt,121,"render=renderAll;renderAll();window.addEventListener('resize',renderAll);"
+template.txt,122,</script></body></html>
+template.txt,123,
+readme.txt,1,# LH 임대주택 장기 공실 분석 (2026 데이터안심구역 경진대회)
+readme.txt,2,
+readme.txt,3,## 폴더 구조
+readme.txt,4,- `code/` 센터에서 실행할 분석 코드
+readme.txt,5,  - `s00fake.py` 연습용 가짜 데이터 생성 (실제 데이터 아님)
+readme.txt,6,  - `s01profile.py` [1차 방문] 데이터 요약표 + 분석 PC 환경 정보
+readme.txt,7,  - `s02vacancy.py` 호별 계약 이력으로 공실 구간 계산
+readme.txt,8,  - `s03aggregate.py` 반출용 집계표·그래프 (소수 칸 자동 가림)
+readme.txt,9,  - `s04model.py` KCB 소득·관리비 결합 + 장기공실 위험 모델
+readme.txt,10,  - `s05charts.py` [집에서] 반출한 CSV로 기획서용 그래프 12종 생성
+readme.txt,11,  - `s06dashboard.py` [집에서] 반출 CSV를 묶어 `app/dashboard.html` 생성 (인터넷 없이 열림)
+readme.txt,12,"- `app/` 웹 대시보드 '빈집 레이더' (`template.html` 원본, `dashboard.html` 생성물)"
+readme.txt,13,"  - `config.py` 경로·컬럼명·가림 기준 설정, `common.py` 공통 함수"
+readme.txt,14,  - `runall.py` 전체 실행
+readme.txt,15,"- `docs/LH공실_분석설계서.pdf` 문제 정의, 가설, 분석 설계, 일정, 역할, 신청서 문구, 기획서 목차"
+readme.txt,16,
+readme.txt,17,## 집에서 연습 (가짜 데이터)
+readme.txt,18,```
+readme.txt,19,cd code
+readme.txt,20,pip install pandas numpy matplotlib scikit-learn
+readme.txt,21,python runall.py --fake
+readme.txt,22,```
+readme.txt,23,"결과는 `output/export/`(반출용 CSV), `output/work/`(호 단위, 반출 금지), `output/charts/`(그래프)에 생긴다."
+readme.txt,24,
+readme.txt,25,## 센터에서 실행
+readme.txt,26,1. 코드 파일을 센터 반입 절차에 따라 반입한다.
+readme.txt,27,2. 데이터 폴더 경로를 지정한다: `set LH_DATA_DIR=D:\data` (Windows) 또는 `config.py`의 `DATA_DIR` 수정
+readme.txt,28,3. 1차 방문: `python s01profile.py` → `output/export/01_*` 반출 신청
+readme.txt,29,4. 2차 이후: `python s02vacancy.py` → `s03aggregate.py` → `s04model.py`
+readme.txt,30,5. **`output/export/`의 CSV만 반출 신청한다. `output/work/` 는 호 단위 자료라 반출하지 않는다.**
+readme.txt,31,6. 집에서: 반출받은 CSV를 `output/export/`에 넣고 `python s05charts.py` → `output/charts/`에 그래프 생성
+readme.txt,32,
+readme.txt,33,## 주의
+readme.txt,34,- 반출은 CSV만 가능한 것으로 보고 센터 코드는 그래프를 만들지 않는다.
+readme.txt,35,- 실제 파일 컬럼명이 정의서와 다르면 `config.py`의 컬럼 매핑을 고친다.
+readme.txt,36,"- 반출 가림 기준(`MIN_CELL`, 기본 10)은 센터 기준에 맞춘다."
+readme.txt,37,- 센터에 sklearn이 없으면 04단계는 건너뛰고 01~03만으로 기획서를 쓸 수 있다.
+readme.txt,38,
+readme.txt,39,"## 단지 단위 분석 (02b, 07)"
+readme.txt,40,1. `s02bcomplex.py`: 법정동+준공년월+공급유형+주택유형이 같은 호를 하나의 **추정단지**로 묶어 단지별 공실률·장기공실 비율 산출 → `export/02b_추정단지별_공실.csv` (반출 대상)
+readme.txt,41,2. `s07match.py [공공단지정보.csv]`: 반출한 추정단지를 공공 LH 단지정보(단지명·법정동·준공·세대수·좌표)와 점수 매칭 → `export/07_단지매칭.csv` (확실/불확실/후보없음)
+readme.txt,42,"3. 연습데이터는 같은 규칙으로 만들어 매칭이 100% 나오지만, 실제 데이터는 '불확실'이 생길 수 있으니 상위 단지는 직접 확인"
+readme.txt,43,
